@@ -1,0 +1,236 @@
+---
+title: "Census of Agriculture 2017"
+output:
+  html_document:
+    df_print: paged
+---
+
+This dataset is the entire Census of Agriculture from 2017, done very 5 years. The main dateset contains all U.S. states and counties as well as all fields counted. The main dataset is 7,288,179 rows and 15 variables when read into the initial file. Data can be downloaded from the U.S. Department fo Agriculture: [https://www.nass.usda.gov/Quick_Stats/CDQT/chapter/2/table/1/state/MO]
+
+I have begun basic data cleaning and organizing of this data with a focus on making accessible charts and analyzing data for Missouri. 
+
+```{r}
+library(tidyverse)
+library(janitor)
+
+rawagro <- read_delim("data/full-2017-agro-census.txt", delim="\t")
+
+rawagro <- clean_names(rawagro)
+```
+
+The first four columns are census chapter, table, row and column. 
+
+Then a sector description, short description, commodity description, agg level, state code, alpha, name, county code and name, domaincat(?) description and then the value. 
+
+### Integrity checks and data cleaning
+
+```{r}
+rawagro <- rawagro %>% mutate(value = as.numeric(gsub(",","", value)))
+```
+
+
+How many census tables are there?
+```{r}
+rawagro %>% group_by(census_table) %>%
+  summarise(count = n())
+```
+There are 77 tables. I don't think I will use this row to sort tables because there are so many.
+
+How many sectors?
+```{r}
+rawagro %>% group_by(sector_desc) %>%
+  summarise(count = n())
+```
+
+There are 5 sectors: animals & products, crops, demographics, economics and environmental.
+
+How many short descriptions are there?
+```{r}
+rawagro %>% group_by(short_desc) %>%
+  summarise(count = n())
+```
+4,118 short descriptions
+
+How many commodities?
+```{r}
+rawagro %>% group_by(commodity_desc) %>%
+  summarise(count = n()) 
+```
+There are 253 commodities
+
+How many states?
+```{r}
+rawagro %>% group_by(state_name) %>%
+  summarise(count = n()) 
+```
+51 - this includes "US TOTAL"
+
+How many state fips codes?
+```{r}
+rawagro %>% group_by(state_fips_code) %>%
+  summarise(count = n()) 
+```
+51 state fips codes
+
+How many counties?
+```{r}
+rawagro %>% group_by(county_name) %>%
+  summarise(count = n()) 
+```
+There are 1,788 counties
+
+How many county codes?
+```{r}
+rawagro %>% group_by(county_code) %>%
+  summarise(count = n()) 
+```
+
+Only 273 - this doesn't seem like a reliable column to use. I will use the county_name column to sort by county.
+
+How many rows don't have a county?
+```{r}
+rawagro %>% filter(county_code == "NULL")
+```
+3,265,849 rows have county listed as null
+
+How many have a county? How many counties are there?
+```{r}
+rawagro %>% filter(county_code != "NULL") 
+```
+4,022,330 rows listed with a county
+
+
+### Creating Missouri tables
+
+Create new table with Missouri using the state fips code. Missouri is 29. This will be a raw table to create more tables from with just Missouri data. 
+```{r}
+moraw <- rawagro %>% filter(state_fips_code == "29")
+```
+My raw Missouri table returns 223,272 rows with 15 variables. 
+
+I want to get rid of census chapter, table, column, row columns in a new table and rearrange the columns in an order than makes more sense to me, with county at the front
+```{r}
+moraw2 <- moraw %>% select(county_name, state_name, state_alpha, state_fips_code, sector_desc, commodity_desc, short_desc, domaincat_desc, value)
+```
+
+How many counties in the Missouri dataset?
+```{r}
+moraw2 %>% filter(county_name != "NULL") %>%
+  group_by(county_name) %>%
+  summarise(n = n()) %>%
+  arrange(desc(n))
+```
+114 counties in the data. Each county has between 922 and 1732 rows
+
+Creating a new table for just farm operations - number of operations
+When domaincat_desc is NA, it's the total number of farms. Then there are farms by size.
+```{r}
+farmops <- moraw2 %>% filter(short_desc == "FARM OPERATIONS - NUMBER OF OPERATIONS")
+```
+
+How many domaincat_desc are in here?
+```{r}
+farmops %>% group_by(domaincat_desc) %>%
+  summarise(count = n())
+```
+There are 1,594 descriptions here. Going through it, there are a lot that talk about NAICS. According to the data documentation from the USDA ... 
+
+"Farms by North American Industry Classification System (NAICS). The NAICS classifies economic activities. It was jointly developed by Mexico, Canada, and the U.S. NAICS makes it possible to produce comparable industrial statistics for Mexico, Canada, and the U.S. For the 2017 census, all agricultural production establishments (farms, ranches, nurseries, greenhouses, etc.) were classified by type of activity or activities using the NAICS code. The 2017 census is the fifth census to use NAICS. Censuses prior to the 1997 census used the old Standard Industrial Classification (SIC) system to classify farms."
+
+There are a lot of different codes. I want to filter these out because we don't need duplicated rows in here.
+
+
+Creating a table for internet by county in Missouri
+```{r}
+demo <- moraw2 %>% filter(commodity_desc == "INTERNET")
+
+demo %>% group_by(short_desc) %>%
+  summarise(count = n())
+```
+
+There are 9 short descriptions for internet
+
+Combining internet access number of operations with total number of operations
+
+Getting just number of operatons by county into a table. There are duplicates - 4 each in here. Doing a check to see if there are the same, they are.
+```{r}
+
+farmops %>% filter(county_name != "NULL" & is.na(domaincat_desc)) %>%
+  group_by(county_name) %>%
+  summarise(count = n())
+
+x <- farmops %>% filter(county_name != "NULL" & is.na(domaincat_desc)) %>%
+  group_by(county_name) %>%
+  select(county_name, sector_desc, commodity_desc, short_desc, value) %>%
+  summarise(total_farms = sum(value/4))
+```
+
+
+Making a new table for internet access totals, combining it with the total number of operations table.
+
+Creating a table for each type of internet access and rename the value variable
+```{r}
+
+y <- demo %>% filter(short_desc == "INTERNET, ACCESS - NUMBER OF OPERATIONS" & county_name != "NULL") %>% 
+  rename("internet" = "value") %>%
+  select(county_name, internet)
+
+cable <- demo %>% filter(short_desc == "INTERNET, ACCESS, VIA CABLE - NUMBER OF OPERATIONS" & county_name != "NULL") %>% 
+  rename("cable" = "value") %>%
+  select(county_name, cable)
+
+dial <- demo %>% filter(short_desc == "INTERNET, ACCESS, VIA DIALUP - NUMBER OF OPERATIONS" & county_name != "NULL") %>% 
+  rename("dialup" = "value") %>%
+  select(county_name, dialup)
+
+dsl <- demo %>% filter(short_desc == "INTERNET, ACCESS, VIA DSL - NUMBER OF OPERATIONS" & county_name != "NULL") %>% 
+  rename("dsl" = "value") %>%
+  select(county_name, dsl) 
+
+fiber <- demo %>% filter(short_desc == "INTERNET, ACCESS, VIA FIBER OPTIC - NUMBER OF OPERATIONS" & county_name != "NULL") %>% 
+  rename("fiber" = "value") %>%
+  select(county_name, fiber)
+
+mobile <- demo %>% filter(short_desc == "INTERNET, ACCESS, VIA MOBILE - NUMBER OF OPERATIONS" & county_name != "NULL") %>% 
+  rename("mobile" = "value") %>%
+  select(county_name, mobile)
+
+other <- demo %>% filter(short_desc == "INTERNET, ACCESS, VIA OTHER - NUMBER OF OPERATIONS" & county_name != "NULL") %>%
+  rename("other_int" = "value") %>%
+  select(county_name, other_int)
+
+satellite <- demo %>% filter(short_desc == "INTERNET, ACCESS, VIA SATELLITE - NUMBER OF OPERATIONS" & county_name != "NULL") %>% 
+  rename("satellite" = "value") %>%
+  select(county_name, satellite)
+
+unknown <- demo %>% filter(short_desc == "INTERNET, ACCESS, VIA UNKNOWN METHOD - NUMBER OF OPERATIONS" & county_name != "NULL") %>% 
+  rename("unknown_int" = "value") %>%
+  select(county_name, unknown_int)
+
+
+```
+
+Joining each table to the main total operations table
+```{r}
+
+x <- x %>% inner_join(y, by = c("county_name"))
+
+x <- x %>% inner_join(cable, by = c("county_name"))
+
+x <- x %>% inner_join(dial, by = c("county_name"))
+
+x <- x %>% inner_join(dsl, by = c("county_name"))
+
+x <- x %>% inner_join(fiber, by = c("county_name"))
+
+x <- x %>% inner_join(mobile, by = c("county_name"))
+
+x <- x %>% inner_join(other, by = c("county_name"))
+
+x <- x %>% inner_join(satellite, by = c("county_name"))
+
+x <- x %>% inner_join(unknown, by = c("county_name"))
+
+```
+
+
